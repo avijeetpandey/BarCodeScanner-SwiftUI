@@ -8,37 +8,69 @@
 import UIKit
 import AVFoundation
 
-protocol ScannerVCDelegate: AnyObject {
-    func didFind(barCode: String)
+enum CameraError {
+    case invalidDeviceInput
+    case invalidScannedValue
 }
 
+
+protocol ScannerVCDelegate: AnyObject {
+    func didFind(barcode: String)
+    func didSurface(error: CameraError)
+}
+
+
 final class ScannerVC: UIViewController {
+    
     let captureSession = AVCaptureSession()
     var previewLayer: AVCaptureVideoPreviewLayer?
     weak var scannerDelegate: ScannerVCDelegate?
     
-    init(delegate: ScannerVCDelegate) {
+    init(scannerDelegate: ScannerVCDelegate) {
         super.init(nibName: nil, bundle: nil)
-        self.scannerDelegate = delegate
+        self.scannerDelegate = scannerDelegate
     }
     
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     
-    private func setupCaptureSession() {
-        guard let videoCaptureDevice = AVCaptureDevice.default(for: .video) else {
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        setupCaptureSession()
+    }
+    
+    
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        
+        guard let previewLayer = previewLayer else {
+            scannerDelegate?.didSurface(error: .invalidDeviceInput)
             return
         }
         
-        var videoInput: AVCaptureDeviceInput
+        previewLayer.frame = view.layer.bounds
+    }
+    
+    private func setupCaptureSession() {
+        guard let videoCaptureDevice = AVCaptureDevice.default(for: .video) else {
+            scannerDelegate?.didSurface(error: .invalidDeviceInput)
+            return
+        }
+        
+        let videoInput: AVCaptureDeviceInput
         
         do {
             try videoInput = AVCaptureDeviceInput(device: videoCaptureDevice)
         } catch {
+            scannerDelegate?.didSurface(error: .invalidDeviceInput)
             return
         }
         
         if captureSession.canAddInput(videoInput) {
             captureSession.addInput(videoInput)
+        } else {
+            scannerDelegate?.didSurface(error: .invalidDeviceInput)
+            return
         }
         
         let metaDataOutput = AVCaptureMetadataOutput()
@@ -47,6 +79,9 @@ final class ScannerVC: UIViewController {
             captureSession.addOutput(metaDataOutput)
             metaDataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
             metaDataOutput.metadataObjectTypes = [.ean8, .ean13]
+        } else {
+            scannerDelegate?.didSurface(error: .invalidDeviceInput)
+            return
         }
         
         previewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
@@ -54,20 +89,29 @@ final class ScannerVC: UIViewController {
         view.layer.addSublayer(previewLayer!)
         
         captureSession.startRunning()
-        
     }
 }
 
+
 extension ScannerVC: AVCaptureMetadataOutputObjectsDelegate {
+    
     func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
-        guard let output = metadataObjects.first else { return }
         
-        guard let machineReadableOutput = output as? AVMetadataMachineReadableCodeObject else {
+        guard let object = metadataObjects.first else {
+            scannerDelegate?.didSurface(error: .invalidScannedValue)
             return
         }
         
-        guard let barcode = machineReadableOutput.stringValue else { return }
+        guard let machineReadableObject = object as? AVMetadataMachineReadableCodeObject else {
+            scannerDelegate?.didSurface(error: .invalidScannedValue)
+            return
+        }
         
-        scannerDelegate?.didFind(barCode: barcode)
+        guard let barcode = machineReadableObject.stringValue else {
+            scannerDelegate?.didSurface(error: .invalidScannedValue)
+            return
+        }
+        
+        scannerDelegate?.didFind(barcode: barcode)
     }
 }
